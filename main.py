@@ -9,6 +9,7 @@ import json
 import httpx
 import random
 import string
+import asyncio
 import validators
 import argparse
 from bs4 import BeautifulSoup   
@@ -36,6 +37,7 @@ def extract_vid(livestream):
     """
     if not validators.url(livestream):
         return
+    print("(+) Getting the video id...")
     headers = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Encoding": "gzip, deflate, br",
@@ -91,10 +93,13 @@ def get_viewer_ids(vid, num):
             - str: The video ID extracted from the livestream URL.
             - str: The channel name.
     """
+    print("(+) Getting viewer ids...")
     user_agents = generate_user_agent(num)
     viewer_ids = {}
     url = f"https://rumble.com/embedJS/u3/?request=video&v={vid}"
-    
+ 
+    # since we only get the viewer ids once and re use them
+    # i don't want do this as fast as possible, if i see that its too slow i might improve it.
     for user_agent in user_agents:
         headers = {'User-Agent': user_agent}
         try:
@@ -109,32 +114,32 @@ def get_viewer_ids(vid, num):
             print(f"something went wrong: {e}")
     return viewer_ids, video_id, channel
 
-def viewbot(viewer_ids, video_id, verbose):
-    """
-    This function is bascailly the viewbot.
-
-    it sends post requests to the targeted endpoint using the viewer ids we retrieved earlier
-    with their user-agent and tells you if the viewer ids were accepted or rejected when verbose.
-    """
-    url = "https://wn0.rumble.com/service.php?api=7&name=video.watching-now"
-
-    for viewer_id, user_agent in viewer_ids.items():
-        headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': user_agent
-        }
-        body = f"video_id={video_id}&viewer_id={viewer_id}"
-
-        try:
-            response = httpx.post(url, headers=headers, data=body)
+async def send_view(url, headers, body, viewer_id, verbose):
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, data=body)
             response.raise_for_status()
             if verbose:
                 if response.status_code == 200:
                     print(f"(~) id {viewer_id} was sent and accepted.")
                 else:
                     print(f"(~) id {viewer_id} was rejected.")
-        except Exception as e:
-            print(f"Something went wrong {e}")
+    except Exception as e:
+        print(f"Something went wrong {e}")
+
+async def viewbot(viewer_ids, video_id, verbose):
+    url = "https://wn0.rumble.com/service.php?api=7&name=video.watching-now"
+
+    tasks = []
+    for viewer_id, user_agent in viewer_ids.items():
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': user_agent
+        }
+        body = f"video_id={video_id}&viewer_id={viewer_id}"
+        tasks.append(send_view(url, headers, body, viewer_id, verbose))
+
+    await asyncio.gather(*tasks)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -167,7 +172,9 @@ def main():
     
     while True:
         try:
-            viewbot(viewer_ids, video_id, verbose)
+
+            asyncio.run(viewbot(viewer_ids, video_id, verbose))
+            # viewbot(viewer_ids, video_id, verbose)
             # we keep sending the same bots every 60 seconds
             time.sleep(60)
         except KeyboardInterrupt as e:
